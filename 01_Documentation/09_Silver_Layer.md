@@ -1,418 +1,1047 @@
-# Logistics Azure Data Engineering Project
+# Silver Layer Implementation
 
-## Project Overview
+## Overview
 
-This project is an end-to-end **Azure Data Engineering solution** designed to process logistics-related **Sales** and **Appointment** data.
+The Silver layer is the **cleaning and transformation layer** of the Logistics Azure Data Engineering Project.
 
-The project uses Azure services for data storage, transformation, validation, security, monitoring, and orchestration.
+The Bronze layer preserves the source data in raw or near-raw form.
 
-The complete solution follows the **Medallion Architecture**:
+The Silver layer takes this Bronze data and converts it into:
 
-**Bronze → Silver → Gold**
+* Clean data
+* Standardized data
+* Correctly typed data
+* Deduplicated data
+* Business-ready structured data
 
-The final Gold layer contains **Dimension and Fact tables** that can be used for analytics and reporting.
-
----
-
-## Project Objective
-
-The main objective of this project is to build a complete Azure Data Engineering pipeline that can:
-
-* Ingest logistics Sales and Appointment data
-* Store source data in Azure Data Lake Storage Gen2
-* Process data using Azure Databricks
-* Transform data using Apache Spark and PySpark
-* Implement Bronze, Silver, and Gold layers
-* Perform schema validation
-* Clean and standardize source data
-* Handle NULL and invalid values
-* Remove duplicate records
-* Convert data into required data types
-* Perform data quality checks
-* Use metadata-driven ETL processing
-* Implement incremental data loading
-* Perform Delta Lake MERGE / UPSERT
-* Create Dimension and Fact tables
-* Maintain ETL execution logs
-* Handle pipeline errors
-* Secure credentials using Azure Key Vault
-* Orchestrate the complete workflow using Azure Data Factory
+The Silver output is stored as **Unity Catalog managed Delta tables**.
 
 ---
 
-## Source Data
-
-The project processes two main datasets:
-
-1. **Sales Data**
-2. **Appointment Data**
-
-The source data is available in **CSV format**.
-
-These source files are stored in Azure Data Lake Storage Gen2 before being processed through the Medallion Architecture.
-
----
-
-## High-Level Architecture
+# Silver Layer Architecture
 
 ```text
-CSV Source Files
-        ↓
-ADLS Gen2
+Bronze Managed Tables
         ↓
 Azure Databricks
         ↓
-Bronze Layer
+Read Metadata Mapping
         ↓
-Silver Layer
+Column Mapping
         ↓
-Gold Layer
+Data Cleaning
         ↓
-Dimension & Fact Tables
+Data Type Conversion
+        ↓
+NULL Handling
+        ↓
+Duplicate Removal
+        ↓
+Silver Managed Tables
+        ↓
+Unity Catalog
+        ↓
+SC2 Managed Storage
 ```
 
-Azure Data Factory is used to orchestrate the complete workflow.
+---
+
+# Silver Layer Purpose
+
+The main purpose of the Silver layer is to improve data quality.
+
+The Silver layer performs:
+
+* Reading Bronze managed tables
+* Metadata-driven column mapping
+* Column renaming
+* Data type conversion
+* Invalid-value handling
+* NULL handling
+* Duplicate removal
+* Data cleaning
+* Data standardization
+* Validation after transformation
+* Writing Silver managed Delta tables
+
+---
+
+# Bronze to Silver
+
+Bronze data is used as the source for Silver.
 
 ```text
-Azure Data Factory
-        ↓
-Databricks Processing
-        ↓
 Bronze
-        ↓
-Silver
-        ↓
-Data Quality
-        ↓
-Gold
-        ↓
-Incremental Processing
-        ↓
-ETL Logging
+   ↓
+Raw / Near-Raw Data
+   ↓
+Silver Transformation
+   ↓
+Clean Data
 ```
 
-Supporting services:
+Easy way to remember:
 
 ```text
-Azure Key Vault
-      ↓
-Secure Secrets / Credentials
-```
+Bronze = Preserve
 
-```text
-Azure SQL Database
-      ↓
-Metadata Configuration
-      +
-ETL Audit Logging
+Silver = Clean + Standardize
 ```
 
 ---
 
-## Technologies Used
+# Source Tables
 
-The project uses the following technologies:
-
-* Microsoft Azure
-* Azure Data Lake Storage Gen2 (ADLS Gen2)
-* Azure Data Factory (ADF)
-* Azure Databricks
-* Apache Spark
-* PySpark
-* Delta Lake
-* Azure SQL Database
-* SQL Server Management Studio (SSMS)
-* Azure Key Vault
-* Git
-* GitHub
-
----
-
-# Medallion Architecture
-
-The project follows the **Medallion Architecture** to improve the quality of data step by step.
+The Silver layer processes two Bronze datasets:
 
 ```text
-Raw Source Data
-      ↓
-Bronze Layer
-      ↓
-Silver Layer
-      ↓
-Gold Layer
+Sales Bronze Data
+Appointment Bronze Data
 ```
 
-Each layer has a different responsibility.
-
----
-
-## Bronze Layer
-
-The Bronze layer stores data in **raw or near-raw form**.
-
-The main purpose of Bronze is to preserve source information before applying major business transformations.
-
-### Bronze Layer Activities
-
-* Read source CSV files
-* Validate source schema
-* Validate expected columns
-* Identify missing columns
-* Identify extra columns
-* Preserve source information
-* Add technical/audit information where required
-* Store data in Delta format
-
-### Bronze Flow
+Logical object names used by the metadata-driven processing include:
 
 ```text
-CSV Source
-    ↓
-Read Data
-    ↓
-Schema Validation
-    ↓
-Column Validation
-    ↓
-Bronze Delta Data
+SALES_DATA_PRIOR_DAY
+APPOINTMENT_DATA
 ```
 
 ---
 
-## Silver Layer
+# Reading Bronze Tables
 
-The Silver layer stores **cleaned, standardized, and transformed data**.
+Because Bronze data is stored as Unity Catalog managed tables, Databricks can read it directly.
 
-Data from Bronze is processed using PySpark before being stored in the Silver layer.
+Conceptually:
 
-### Silver Layer Activities
+```python
+sales_bronze_df = spark.table(
+    "<catalog>.bronze.<sales_table>"
+)
+```
 
-* Read Bronze data
-* Apply metadata-driven column mapping
-* Rename columns
-* Convert data types
-* Handle malformed values
-* Handle NULL values
-* Remove duplicate records
-* Standardize data
-* Clean invalid values
-* Apply transformation rules
-* Prepare data for Gold processing
+Appointment data:
 
-### Silver Flow
+```python
+appointment_bronze_df = spark.table(
+    "<catalog>.bronze.<appointment_table>"
+)
+```
+
+---
+
+# Metadata-Driven Column Mapping
+
+A major part of the Silver implementation is **metadata-driven transformation**.
+
+Azure SQL Database contains column-mapping configuration in:
+
+```sql
+metadata.OBJECTS_COLUMN_MAPPING
+```
+
+Instead of manually writing all source-to-target mappings inside the notebook, Databricks reads the mapping information from Azure SQL.
+
+---
+
+# Why Column Mapping Is Required
+
+Source column names may be different from the standardized target column names.
+
+For example, the Appointment source contains:
+
+```text
+APPOINTMENT_TITLE
+APPOINTMENT_STATUS
+APPOINTMENT_DATE
+```
+
+The target Silver columns can be standardized as:
+
+```text
+TITLE
+STATUS
+DATE
+```
+
+Therefore:
+
+```text
+APPOINTMENT_TITLE
+        ↓
+TITLE
+
+APPOINTMENT_STATUS
+        ↓
+STATUS
+
+APPOINTMENT_DATE
+        ↓
+DATE
+```
+
+This transformation belongs in the Silver layer.
+
+---
+
+# Column Mapping Flow
 
 ```text
 Bronze Data
-      ↓
-Column Mapping
-      ↓
-Data Cleaning
-      ↓
-Data Type Conversion
-      ↓
-NULL Handling
-      ↓
-Duplicate Removal
-      ↓
+     ↓
+Read Azure SQL Metadata
+     ↓
+Get Mapping for Object
+     ↓
+Source Column
+     ↓
+Target Column
+     ↓
+Target Data Type
+     ↓
 Silver Data
 ```
 
 ---
 
-## Gold Layer
+# apply_mapping Function
 
-The Gold layer stores **business-ready analytical data**.
+A reusable PySpark function is used to apply the mapping.
 
-Cleaned Silver data is transformed into a dimensional model containing **Dimension and Fact tables**.
+Conceptually:
 
-### Gold Flow
-
-```text
-Silver Appointment Data
-        ↓
-DIM_APPOINTMENT_DATA
-        ↓
-        ├──── Join
-        ↓
-Silver Sales Data
-        ↓
-FACT_SALES
+```python
+sales_silver_df = apply_mapping(
+    sales_bronze_df,
+    "SALES_DATA_PRIOR_DAY"
+)
 ```
 
-The Gold layer can be used for:
+For Appointment:
 
-* Analytics
-* Reporting
-* Business queries
-* Downstream consumption
+```python
+appointment_silver_df = apply_mapping(
+    appointment_bronze_df,
+    "APPOINTMENT_DATA"
+)
+```
 
----
-
-# Final Gold Tables
-
-## DIM_APPOINTMENT_DATA
-
-`DIM_APPOINTMENT_DATA` is the Dimension table created using cleaned Appointment data.
-
-It contains descriptive Appointment-related information.
-
-The Dimension table provides descriptive context that can be used when analyzing Sales information.
+The same function can therefore process different datasets based on metadata.
 
 ---
 
-## FACT_SALES
+# Why a Reusable Function Is Used
 
-`FACT_SALES` is the Fact table created from cleaned Sales data.
+Without reusable mapping logic:
 
-It contains measurable Sales information and connects with the related dimension data where required.
+```text
+Sales
+↓
+Separate Mapping Code
 
-The Fact table is designed for analytical and reporting workloads.
+Appointment
+↓
+Separate Mapping Code
+```
+
+With metadata:
+
+```text
+Generic apply_mapping()
+        ↓
+Object Name
+        ↓
+Read Metadata
+        ↓
+Apply Required Mapping
+```
+
+This reduces duplicate code.
 
 ---
 
-# Metadata-Driven ETL Processing
+# Mapping Responsibilities
 
-The project uses **Azure SQL Database** to store ETL configuration information.
+The mapping process handles:
 
-The main metadata table is:
+1. Source column identification
+2. Target column naming
+3. Target data type selection
+4. Column conversion
+
+Conceptually:
+
+```text
+SOURCE_COLUMN
+      ↓
+TARGET_COLUMN
+      ↓
+TARGET_DATA_TYPE
+```
+
+---
+
+# Data Type Conversion
+
+Bronze data is read mainly as strings to safely preserve the original source values.
+
+Silver converts those values into the required target data types.
+
+Common target types include:
+
+```text
+STRING
+INTEGER
+FLOAT
+DATE
+TIMESTAMP
+```
+
+Example:
+
+```text
+Bronze
+
+PRICE = "215.0000"
+
+        ↓
+
+Silver
+
+PRICE = 215.0
+```
+
+---
+
+# Why Type Conversion Is Done in Silver
+
+CSV source data can contain unexpected values.
+
+If data is converted immediately in Bronze, malformed values can cause ingestion failure.
+
+Therefore:
+
+```text
+Bronze
+   ↓
+Keep Values Safely
+
+Silver
+   ↓
+Clean Values
+   ↓
+Convert Types
+```
+
+This separates ingestion from cleaning.
+
+---
+
+# Malformed Numeric Value Issue
+
+During Sales Silver processing, a numeric column contained a value similar to:
+
+```text
+215.0000, 230.0000
+```
+
+The target data type was:
+
+```text
+FLOAT
+```
+
+A direct Spark cast failed because the value contained more than one number in a single string.
+
+The Spark error was similar to:
+
+```text
+CAST_INVALID_INPUT
+```
+
+The value could not be directly cast from STRING to FLOAT.
+
+---
+
+# Why the Cast Failed
+
+A valid FLOAT value looks like:
+
+```text
+215.0000
+```
+
+But the source contained:
+
+```text
+215.0000, 230.0000
+```
+
+This is not one valid floating-point value.
+
+Therefore:
+
+```text
+STRING
+"215.0000, 230.0000"
+
+       ↓
+
+FLOAT
+
+       ✕
+Cannot Directly Cast
+```
+
+---
+
+# Fix for Malformed Numeric Data
+
+Before applying the final FLOAT conversion, the source value must be cleaned or safely converted.
+
+Conceptually:
+
+```text
+Raw Value
+215.0000, 230.0000
+        ↓
+Clean / Extract Valid Value
+        ↓
+215.0000
+        ↓
+Cast to FLOAT
+        ↓
+215.0
+```
+
+The Silver layer is the correct location for handling this kind of source-data problem.
+
+---
+
+# Safe Casting
+
+Where malformed input is possible, Spark safe-casting logic can be used.
+
+Conceptually:
 
 ```sql
-metadata.OBJECTS_CONFIGURATION
+try_cast(column_name AS FLOAT)
 ```
 
-Instead of hard-coding all processing information directly inside Databricks notebooks, configuration can be maintained in the metadata table.
-
-The ETL process can read configuration information dynamically during execution.
-
-### Metadata Information
-
-The configuration can contain information such as:
-
-* Source object name
-* Target object name
-* Source location
-* Target location
-* Source columns
-* Target columns
-* Column mapping
-* Target data types
-* Processing layer
-* Object configuration
-* Active/inactive configuration
-
-### Benefits of Metadata-Driven Processing
-
-* Reduces hard-coded values
-* Makes notebooks reusable
-* Makes the pipeline easier to maintain
-* Makes configuration changes easier
-* Supports scalable ETL development
-
----
-
-# Data Quality Checks
-
-Data quality checks are implemented to verify that data is valid before it moves to the next processing stage.
-
-The project includes checks such as:
-
-* Schema validation
-* Expected column validation
-* Missing column validation
-* Extra column validation
-* Row count validation
-* NULL validation
-* Duplicate validation
-* Data type validation
-* Invalid value checks
-* Business rule validation
-
-### Data Quality Flow
+With safe casting:
 
 ```text
-Processed Data
-      ↓
-Run Data Quality Checks
-      ↓
-Validate Records
-      ↓
-Valid Data
-      ↓
-Continue Processing
+Valid Value
+"215.0000"
+     ↓
+215.0
+
+Invalid Value
+"ABC"
+     ↓
+NULL
 ```
 
-Data quality checks help prevent incorrect or poor-quality data from reaching the Gold layer.
+The resulting NULL can then be handled according to project rules.
 
 ---
 
-# Incremental Data Loading
+# Data Cleaning
 
-The project supports **incremental loading**.
+Silver performs cleaning before data is used for analytics.
 
-Incremental loading means the complete historical dataset does not need to be reprocessed every time.
+Cleaning activities can include:
 
-Only new or changed records need to be processed.
+* Removing unwanted characters
+* Trimming spaces
+* Standardizing text
+* Correcting malformed values
+* Converting numeric columns
+* Converting date columns
+* Handling blank values
 
-The project uses **Delta Lake MERGE** for incremental processing.
+---
 
-### MERGE Logic
+# Trimming String Values
+
+Leading and trailing spaces can create inconsistent records.
+
+Example:
 
 ```text
-Incoming Data
-      ↓
-Compare With Existing Delta Data
-      ↓
-Record Exists?
-      ↓
- ┌───────────────┬───────────────┐
- │      Yes      │       No      │
- ↓               ↓
-UPDATE          INSERT
+" COMPLETED "
 ```
 
-This process is also called:
+becomes:
 
-**UPSERT = UPDATE + INSERT**
+```text
+"COMPLETED"
+```
 
-### Benefits of Incremental Loading
+PySpark concept:
 
-* Reduces unnecessary processing
-* Improves ETL efficiency
-* Supports new records
-* Supports changed records
-* Avoids reloading the complete dataset
+```python
+from pyspark.sql.functions import trim
+
+df = df.withColumn(
+    "STATUS",
+    trim("STATUS")
+)
+```
 
 ---
 
-# ETL Audit Logging
+# Standardizing Text
 
-The project maintains ETL execution information in **Azure SQL Database**.
+Text values may appear in different formats.
 
-The main audit table is:
+Example:
+
+```text
+completed
+COMPLETED
+Completed
+```
+
+These can be standardized.
+
+For example:
+
+```text
+COMPLETED
+```
+
+Conceptually:
+
+```python
+from pyspark.sql.functions import upper
+
+df = df.withColumn(
+    "STATUS",
+    upper("STATUS")
+)
+```
+
+Standardization helps prevent the same business value from appearing in multiple formats.
+
+---
+
+# NULL Handling
+
+The Silver layer checks NULL values in important columns.
+
+NULL values can come from:
+
+* Missing source values
+* Empty strings
+* Failed data type conversions
+* Invalid source records
+
+Flow:
+
+```text
+Silver Transformation
+       ↓
+Check NULL Values
+       ↓
+Handle According to Column Rule
+```
+
+---
+
+# NULL Handling Strategy
+
+NULL handling depends on the meaning of the column.
+
+Possible actions include:
+
+```text
+Keep NULL
+Fill Default Value
+Remove Invalid Record
+Flag Record for Validation
+```
+
+Not every NULL should automatically be replaced.
+
+Business meaning must be considered.
+
+---
+
+# Empty String vs NULL
+
+An empty string:
+
+```text
+""
+```
+
+is not always the same as:
+
+```text
+NULL
+```
+
+Silver processing can standardize blank values where required.
+
+Conceptually:
+
+```text
+Empty String
+     ↓
+Convert to NULL
+     ↓
+Apply NULL Rule
+```
+
+---
+
+# Duplicate Removal
+
+Duplicate records are removed during Silver processing.
+
+Duplicates can cause:
+
+* Incorrect counts
+* Double counting
+* Incorrect totals
+* Incorrect analytics
+
+PySpark can remove exact duplicate rows using:
+
+```python
+df = df.dropDuplicates()
+```
+
+---
+
+# Business-Key Deduplication
+
+In some datasets, duplicate detection should use selected columns instead of every column.
+
+Conceptually:
+
+```python
+df = df.dropDuplicates(
+    ["<business_key_column>"]
+)
+```
+
+The selected columns depend on the dataset.
+
+---
+
+# Why Deduplication Is Important
+
+Suppose the same Sales record appears twice:
+
+```text
+Sale 101
+Sale 101
+```
+
+Without duplicate removal:
+
+```text
+Sales Count = 2
+```
+
+After deduplication:
+
+```text
+Sales Count = 1
+```
+
+This improves analytical accuracy.
+
+---
+
+# Data Standardization
+
+Silver creates consistent data.
+
+Examples include:
+
+```text
+Column Names
+Data Types
+Text Values
+Dates
+Numeric Values
+NULL Representation
+```
+
+This means downstream Gold logic receives predictable data.
+
+---
+
+# Appointment Silver Processing
+
+Appointment Bronze data goes through:
+
+```text
+Appointment Bronze
+        ↓
+Read Mapping
+        ↓
+Rename Columns
+        ↓
+Convert Data Types
+        ↓
+Clean Values
+        ↓
+Handle NULLs
+        ↓
+Remove Duplicates
+        ↓
+Appointment Silver
+```
+
+Example source-to-target mapping:
+
+```text
+APPOINTMENT_TITLE
+        ↓
+TITLE
+
+APPOINTMENT_STATUS
+        ↓
+STATUS
+
+APPOINTMENT_DATE
+        ↓
+DATE
+```
+
+---
+
+# Sales Silver Processing
+
+Sales Bronze data follows the same overall framework.
+
+```text
+Sales Bronze
+     ↓
+Read Mapping
+     ↓
+Rename Columns
+     ↓
+Clean Numeric Values
+     ↓
+Convert Data Types
+     ↓
+Handle NULLs
+     ↓
+Remove Duplicates
+     ↓
+Sales Silver
+```
+
+The Sales data required additional care because malformed numeric source values were identified during transformation.
+
+---
+
+# Silver Validation
+
+After cleaning and transformation, Silver data is checked before it is saved.
+
+Checks may include:
+
+* Column count
+* Required columns
+* Data types
+* NULL values
+* Duplicate records
+* Invalid values
+* Row counts
+
+---
+
+# Schema Check
+
+The final Silver schema should match the expected standardized schema.
+
+Conceptually:
+
+```text
+Transformed Columns
+        ↓
+Expected Silver Columns
+        ↓
+Compare
+        ↓
+Valid Schema
+```
+
+---
+
+# Data Type Validation
+
+After conversion, the target types should match the metadata definition.
+
+For example:
+
+```text
+PRICE
+↓
+FLOAT
+
+DATE
+↓
+DATE
+
+TITLE
+↓
+STRING
+```
+
+This ensures Gold receives consistent data.
+
+---
+
+# Row Count Validation
+
+Row counts can also be compared during transformation.
+
+Conceptually:
+
+```text
+Bronze Count
+     ↓
+Cleaning
+     ↓
+Silver Count
+```
+
+Differences can occur because of:
+
+* Duplicate removal
+* Invalid-record removal
+* Filtering
+* Cleaning rules
+
+The count should therefore be monitored.
+
+---
+
+# Silver Managed Tables
+
+After successful transformation, Silver DataFrames are written as Unity Catalog managed Delta tables.
+
+Conceptually:
+
+```python
+sales_silver_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .saveAsTable(
+        "<catalog>.silver.<sales_table>"
+    )
+```
+
+Appointment:
+
+```python
+appointment_silver_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .saveAsTable(
+        "<catalog>.silver.<appointment_table>"
+    )
+```
+
+The exact write mode depends on the processing step.
+
+---
+
+# Physical Storage
+
+Silver tables are managed through Unity Catalog.
+
+Their Delta files are physically stored in **SC2 managed storage**.
+
+```text
+Silver Table
+     ↓
+Unity Catalog
+     ↓
+Managed Delta Table
+     ↓
+SC2
+```
+
+They are not manually written to an SC1 Silver folder.
+
+---
+
+# SC1 vs SC2
+
+## SC1
+
+Used for:
+
+```text
+Landing
+Logs
+Archive
+```
+
+## SC2
+
+Used for:
+
+```text
+Unity Catalog Managed Storage
+```
+
+which contains managed:
+
+```text
+Bronze Tables
+Silver Tables
+Gold Tables
+```
+
+---
+
+# Silver and Azure SQL Metadata
+
+Azure SQL provides the transformation configuration.
+
+```text
+Azure SQL Database
+        ↓
+metadata.OBJECTS_COLUMN_MAPPING
+        ↓
+Databricks
+        ↓
+Silver Transformation
+```
+
+This separates configuration from transformation logic.
+
+---
+
+# Metadata-Driven Silver Architecture
+
+```text
+               Azure SQL Database
+                       │
+                       ↓
+         OBJECTS_COLUMN_MAPPING
+                       │
+                       ↓
+Bronze Table → Azure Databricks
+                       │
+                       ↓
+                apply_mapping()
+                       │
+             ┌─────────┼─────────┐
+             ↓         ↓         ↓
+           Rename     Cast      Clean
+             │         │         │
+             └─────────┼─────────┘
+                       ↓
+                   Silver
+```
+
+---
+
+# Silver and Data Quality
+
+Silver transformation and data-quality checking are related but have different goals.
+
+Silver transformation:
+
+```text
+Clean the data
+```
+
+Data-quality checks:
+
+```text
+Verify the cleaned data
+```
+
+Flow:
+
+```text
+Bronze
+   ↓
+Silver Transformation
+   ↓
+Data Quality Checks
+   ↓
+Gold
+```
+
+---
+
+# Error Handling
+
+Silver processing uses error handling to capture transformation failures.
+
+Conceptually:
+
+```python
+try:
+    # Read Bronze
+    # Apply mapping
+    # Clean values
+    # Convert data types
+    # Write Silver
+
+except Exception as e:
+    # Capture error
+    # Write FAILED status
+    raise
+```
+
+---
+
+# Transformation Failure Example
+
+The malformed Sales numeric value caused a cast error.
+
+Flow:
+
+```text
+Sales Bronze
+     ↓
+apply_mapping()
+     ↓
+FLOAT Cast
+     ↓
+Malformed Value Found
+     ↓
+CAST_INVALID_INPUT
+     ↓
+Transformation Failed
+```
+
+The transformation logic was then improved to safely handle malformed numeric data.
+
+---
+
+# ETL Logging
+
+Silver processing can record execution information in:
 
 ```sql
 audit.ETL_LOG
 ```
 
-The audit table is used to track ETL executions.
+Typical information includes:
 
-### ETL Log Information
-
-ETL logs can contain information such as:
-
-* ETL process name
-* Source object
-* Target object
+* Object name
+* Layer name
 * Start time
 * End time
-* Number of records processed
-* Execution status
+* Record count
+* Status
 * Error message
-* Execution details
 
-### ETL Status
-
-Example statuses include:
+Example statuses:
 
 ```text
 STARTED
@@ -420,334 +1049,212 @@ SUCCESS
 FAILED
 ```
 
-### Successful ETL Flow
+---
+
+# Successful Silver Flow
 
 ```text
-ETL Starts
-    ↓
+Start Silver Processing
+        ↓
 Write STARTED Log
-    ↓
-Process Data
-    ↓
-Processing Successful
-    ↓
+        ↓
+Read Bronze
+        ↓
+Read Mapping
+        ↓
+Transform
+        ↓
+Clean
+        ↓
+Validate
+        ↓
+Write Silver
+        ↓
 Write SUCCESS Log
 ```
 
-### Failed ETL Flow
+---
+
+# Failed Silver Flow
 
 ```text
-ETL Starts
-    ↓
-Process Data
-    ↓
-Processing Failure
-    ↓
-Capture Error
-    ↓
+Start Silver Processing
+        ↓
+Read Bronze
+        ↓
+Transformation Error
+        ↓
+Capture Exception
+        ↓
 Write FAILED Log
 ```
 
-ETL audit logging helps with:
+---
 
-* Pipeline monitoring
-* Debugging
-* Troubleshooting
-* Execution tracking
-* Operational auditing
+# Silver to Gold
+
+After Sales and Appointment data are cleaned, they become inputs for the Gold layer.
+
+```text
+Appointment Silver
+        ↓
+DIM_APPOINTMENT_DATA
+```
+
+and:
+
+```text
+Sales Silver
+      +
+DIM_APPOINTMENT_DATA
+      ↓
+FACT_SALES
+```
+
+Therefore, the Silver layer acts as the clean foundation for Gold modeling.
 
 ---
 
-# Error Handling
+# Bronze vs Silver vs Gold
 
-Error handling is implemented to make the ETL process more reliable.
+| Layer  | Main Purpose                                   |
+| ------ | ---------------------------------------------- |
+| Bronze | Preserve raw or near-raw source data           |
+| Silver | Clean, standardize, and validate data          |
+| Gold   | Build business-ready Dimension and Fact tables |
 
-When an error occurs during processing, the error is captured and recorded.
-
-### Error Handling Flow
-
-```text
-Start ETL Process
-      ↓
-Try Processing
-      ↓
-Successful
-      ↓
-Write SUCCESS Status
-```
-
-If processing fails:
+Easy way to remember:
 
 ```text
-Processing Failure
-      ↓
-Capture Exception
-      ↓
-Capture Error Message
-      ↓
-Write FAILED Status
-      ↓
-Store Error Details
-```
+Bronze
+Raw
 
-Error handling helps identify:
+Silver
+Clean
 
-* Which ETL process failed
-* When the failure occurred
-* What error occurred
-* Which object was being processed
-
----
-
-# Azure SQL Database
-
-Azure SQL Database is used as a supporting component of the ETL solution.
-
-The project uses two important SQL schemas:
-
-```text
-Azure SQL Database
-        │
-        ├── metadata
-        │     └── OBJECTS_CONFIGURATION
-        │
-        └── audit
-              └── ETL_LOG
-```
-
-## Metadata Schema
-
-The `metadata` schema stores ETL configuration information.
-
-Main table:
-
-```sql
-metadata.OBJECTS_CONFIGURATION
-```
-
-## Audit Schema
-
-The `audit` schema stores ETL execution and monitoring information.
-
-Main table:
-
-```sql
-audit.ETL_LOG
+Gold
+Business
 ```
 
 ---
 
-# Azure Key Vault
-
-Azure Key Vault is used to securely manage sensitive credentials and secrets.
-
-Examples include:
-
-* Azure SQL username
-* Azure SQL password
-* Client ID
-* Client Secret
-* Tenant ID
-* Storage credentials
-* Other application secrets
-
-Sensitive credentials should not be hard-coded directly inside notebooks or source code.
-
-### Security Flow
+# Complete Silver Processing Flow
 
 ```text
-Azure Key Vault
-      ↓
-Secure Secrets
-      ↓
-Databricks / Azure Services
+                   Bronze Managed Tables
+                    /                \
+                   ↓                  ↓
+                Sales             Appointment
+                   \                  /
+                    \                /
+                         ↓
+                  Azure Databricks
+                         │
+                         ↓
+                Read SQL Metadata
+                         │
+                         ↓
+                  apply_mapping()
+                         │
+        ┌────────────────┼────────────────┐
+        ↓                ↓                ↓
+   Rename Columns   Convert Types     Clean Data
+        │                │                │
+        └────────────────┼────────────────┘
+                         ↓
+                    Handle NULLs
+                         ↓
+                  Remove Duplicates
+                         ↓
+                  Validate Results
+                         ↓
+                 Silver Managed Tables
+                         ↓
+                    Unity Catalog
+                         ↓
+                 SC2 Managed Storage
 ```
 
 ---
 
-# Azure Data Factory Orchestration
+# Key Problem Solved in Silver
 
-Azure Data Factory is used as the **orchestration layer** of the project.
+One important issue identified during the implementation was malformed numeric source data.
 
-ADF controls the execution and sequence of the different ETL processes.
-
-### ADF Pipeline Flow
+Example:
 
 ```text
-ADF Pipeline
-      ↓
-Start Processing
-      ↓
-Databricks ETL
-      ↓
-Bronze Layer
-      ↓
-Silver Layer
-      ↓
-Data Quality Checks
-      ↓
-Gold Layer
-      ↓
-Incremental Processing
-      ↓
-ETL Logging
-      ↓
-Pipeline Complete
+215.0000, 230.0000
 ```
 
-ADF provides centralized orchestration for the end-to-end pipeline.
+The value could not be directly converted to:
+
+```text
+FLOAT
+```
+
+The Silver layer handled this problem by cleaning or safely converting the source value before applying the required target data type.
+
+This demonstrates why data-quality and transformation logic should be applied before data reaches the Gold layer.
 
 ---
 
-# Security
+# Easy Silver Layer Explanation
 
-Security is an important part of the solution.
-
-Sensitive information is managed through Azure Key Vault instead of storing credentials directly inside project code.
-
-This provides:
-
-* Better credential security
-* Centralized secret management
-* Easier maintenance
-* Better access control
-
----
-
-# Project Features
-
-The project demonstrates the following Data Engineering concepts:
-
-* End-to-end Azure Data Engineering pipeline
-* CSV source data ingestion
-* ADLS Gen2 storage
-* Azure Databricks processing
-* Apache Spark processing
-* PySpark transformations
-* Delta Lake
-* Bronze, Silver, and Gold Medallion Architecture
-* Schema validation
-* Expected column validation
-* Data cleaning
-* Data standardization
-* Duplicate removal
-* NULL handling
-* Invalid data handling
-* Data type conversion
-* Metadata-driven ETL
-* Azure SQL metadata configuration
-* Data quality checks
-* Incremental data loading
-* Delta Lake MERGE
-* UPSERT operations
-* Dimension table creation
-* Fact table creation
-* ETL audit logging
-* Error handling
-* Azure Key Vault security
-* Azure Data Factory orchestration
-* Git version control
-* GitHub documentation
-
----
-
-# Complete Project Architecture
+The Silver layer can be remembered as:
 
 ```text
-                 ┌─────────────────────────┐
-                 │      Source Files       │
-                 │                         │
-                 │ Sales + Appointment CSV │
-                 └────────────┬────────────┘
-                              ↓
-                 ┌─────────────────────────┐
-                 │        ADLS Gen2        │
-                 │       Data Storage      │
-                 └────────────┬────────────┘
-                              ↓
-                 ┌─────────────────────────┐
-                 │   Azure Data Factory    │
-                 │      Orchestration      │
-                 └────────────┬────────────┘
-                              ↓
-                 ┌─────────────────────────┐
-                 │    Azure Databricks     │
-                 │     Spark / PySpark     │
-                 └────────────┬────────────┘
-                              ↓
-                        Bronze Layer
-                              ↓
-                        Silver Layer
-                              ↓
-                     Data Quality Checks
-                              ↓
-                         Gold Layer
-                         /          \
-                        ↓            ↓
-          DIM_APPOINTMENT_DATA   FACT_SALES
-```
-
-Supporting components:
-
-```text
-Azure SQL Database
-        │
-        ├── metadata.OBJECTS_CONFIGURATION
-        │
-        └── audit.ETL_LOG
-```
-
-```text
-Azure Key Vault
-        │
-        └── Secure Credentials / Secrets
+Read Bronze
+    ↓
+Map Columns
+    ↓
+Clean Data
+    ↓
+Fix Data Types
+    ↓
+Handle NULLs
+    ↓
+Remove Duplicates
+    ↓
+Validate
+    ↓
+Save Silver
 ```
 
 ---
 
-# End-to-End Data Flow
+# Interview Explanation
 
-```text
-Sales CSV + Appointment CSV
-             ↓
-          ADLS Gen2
-             ↓
-       Azure Databricks
-             ↓
-           Bronze
-             ↓
-           Silver
-             ↓
-     Data Quality Checks
-             ↓
-            Gold
-        /           \
-       ↓             ↓
-DIM_APPOINTMENT   FACT_SALES
-       ↓             ↓
-       Business-Ready Data
-```
-
-Azure Data Factory orchestrates the overall pipeline, while Azure SQL Database maintains metadata and audit information and Azure Key Vault securely manages credentials.
+> In my Logistics Azure Data Engineering project, the Silver layer cleans and standardizes the Bronze data using PySpark. I implemented metadata-driven column mapping using Azure SQL, so source columns and target data types are configured outside the notebook. The Silver processing handles column renaming, malformed values, data-type conversion, NULL values, duplicate removal, and standardization. During implementation, I also handled a malformed numeric value that caused a Spark cast error. After cleaning, the Sales and Appointment datasets are stored as Unity Catalog managed Delta tables in the Silver schema, with their physical storage managed in the second ADLS account.
 
 ---
 
-# Project Outcome
+# Summary
 
-The completed solution demonstrates a practical end-to-end Azure Data Engineering implementation covering:
+The Silver layer converts raw Bronze data into trusted and standardized datasets.
 
-* Data ingestion
-* Cloud data storage
-* Data transformation
-* Medallion Architecture
-* Metadata-driven ETL
-* Data quality validation
-* Incremental processing
-* Delta MERGE / UPSERT
-* Dimensional modeling
-* ETL monitoring
-* Error handling
-* Security
-* Pipeline orchestration
+```text
+Bronze
+   ↓
+Metadata Mapping
+   ↓
+Column Renaming
+   ↓
+Data Cleaning
+   ↓
+Data Type Conversion
+   ↓
+NULL Handling
+   ↓
+Duplicate Removal
+   ↓
+Validation
+   ↓
+Silver Managed Tables
+   ↓
+Unity Catalog
+   ↓
+SC2
+```
 
-This project demonstrates how multiple Azure Data Engineering services can work together to build a **reliable, maintainable, and scalable data pipeline** for logistics data.
+The cleaned Silver datasets are then used to build the Gold **Dimension and Fact tables**.
